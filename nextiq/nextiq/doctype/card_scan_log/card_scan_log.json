@@ -125,13 +125,22 @@
    "delete": 1,
    "export": 1,
    "read": 1,
+   "role": "Administrator",
+   "write": 1
+  },
+  {
+   "export": 1,
+   "read": 1,
    "role": "System Manager",
    "write": 1
   },
   {
    "read": 1,
-   "role": "All",
-   "if_owner": 1
+   "role": "Sales User"
+  },
+  {
+   "read": 1,
+   "role": "Sales Manager"
   }
  ],
  "row_format": "Dynamic",
