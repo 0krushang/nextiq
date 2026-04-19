@@ -651,6 +651,23 @@ html, body {
     return result;
   }
 
+  // ── API helper (portal-safe: explicit CSRF token) ──────────────────────
+  function apiCall(method, args) {
+    const token = (frappe && frappe.csrf_token) ? frappe.csrf_token : "Fetch";
+    return fetch("/api/method/" + method, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Frappe-CSRF-Token": token,
+      },
+      body: JSON.stringify(args || {}),
+    }).then(r => {
+      if (!r.ok) return r.json().then(d => Promise.reject(d));
+      return r.json();
+    }).then(d => d.message);
+  }
+
   // ── Balance ────────────────────────────────────────────────────────────
   const balancePill = document.getElementById("balance-pill");
   const balanceText = document.getElementById("balance-text");
@@ -663,7 +680,7 @@ html, body {
   }
 
   function fetchBalance() {
-    frappe.xcall("nextiq.api.get_live_balance").then(d => {
+    apiCall("nextiq.api.get_live_balance").then(d => {
       if (d && d.success) {
         scansRemaining = d.scans_remaining;
         scansAllowed   = d.scans_allowed;
@@ -682,7 +699,7 @@ html, body {
     showToast("Uploading…", "info", 8000);
     try {
       const merged = await mergeImages(frontURL, backURL);
-      await frappe.xcall("nextiq.api.submit_card_scan", {
+      await apiCall("nextiq.api.submit_card_scan", {
         merged_image_base64: merged.split(",")[1],
         filename: "business_card.jpg",
       });
