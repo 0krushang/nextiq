@@ -481,72 +481,13 @@ def _send_scan_notification(log_name, outcome, lead_name=None, message=None, sca
 		if not user_email:
 			return
 
-		site_url = frappe.utils.get_url()
-
-		if outcome == "success" and lead_name:
-			lead_url = f"{site_url}/app/lead/{lead_name}"
-			frappe.sendmail(
-				recipients=[user_email],
-				subject="[NextIQ] Lead created from your card scan",
-				message=(
-					f"<p>Your card scan is complete.</p>"
-					f"<p><strong>Lead created:</strong> "
-					f"<a href='{lead_url}'>{lead_name}</a></p>"
-					+ (f"<p><strong>Scans remaining:</strong> {scans_remaining}</p>"
-					   if scans_remaining is not None else "")
-				),
-				delayed=False,
-			)
-
-		elif outcome == "not_a_business_card":
-			frappe.sendmail(
-				recipients=[user_email],
-				subject="[NextIQ] Card scan — image not recognised",
-				message=(
-					"<p>Your card scan could not extract contact information from the image. "
-					"1 scan was used.</p>"
-					+ (f"<p><strong>{scans_remaining} scan(s) remaining.</strong></p>"
-					   if scans_remaining is not None else "")
-					+ "<p>Please try again with a clearer image of a business card.</p>"
-				),
-				delayed=False,
-			)
-
-		elif outcome == "quota_exceeded":
+		if outcome == "quota_exceeded":
 			frappe.sendmail(
 				recipients=[user_email],
 				subject="[NextIQ] Scan quota exhausted",
 				message=(
 					"<p>Your scan quota is exhausted. No more scans can be processed.</p>"
 					"<p>Please contact the NextIQ team to increase your quota.</p>"
-				),
-				delayed=False,
-			)
-
-		elif outcome == "invalid_data":
-			frappe.sendmail(
-				recipients=[user_email],
-				subject="[NextIQ] Card scan — data could not be saved",
-				message=(
-					"<p>Your card scan completed and the AI extracted data, but one or more "
-					"field values could not be saved as a Lead (e.g. an unrecognised country "
-					"name or invalid option).</p>"
-					"<p><strong>1 scan was used.</strong></p>"
-					+ (f"<p><strong>Details:</strong> {message}</p>" if message else "")
-					+ "<p>Please open the Card Scan Log to review the AI response and "
-					"create the Lead manually.</p>"
-				),
-				delayed=False,
-			)
-
-		elif outcome == "duplicate_lead":
-			frappe.sendmail(
-				recipients=[user_email],
-				subject="[NextIQ] Card scan — lead already exists",
-				message=(
-					"<p>Your card scan completed, but a lead with this email address already exists in the system.</p>"
-					+ (f"<p><strong>Details:</strong> {message}</p>" if message else "")
-					+ "<p>Please check your existing leads or update the contact details on the card.</p>"
 				),
 				delayed=False,
 			)
