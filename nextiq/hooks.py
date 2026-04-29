@@ -1,7 +1,7 @@
 app_name = "nextiq"
 app_title = "NextIQ"
 app_publisher = "krushang.patel@satat.tech"
-app_description = "NextIQ — Business card scan portal for ERPNext. Calls NextIQ Service for AI processing."
+app_description = "Scan business cards and instantly create ERPNext leads using AI. Install on any ERPNext site to enable one-tap card capture for your team."
 app_email = "krushang.patel@satat.tech"
 app_license = "mit"
 
