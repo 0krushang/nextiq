@@ -24,6 +24,35 @@ _ALLOWED_LEAD_FIELDS = frozenset({
 })
 _MAX_FIELD_LEN = 500   # max characters per Lead field value
 
+# Map Frappe DocType names (as they appear in "Could not find X: Y" errors) to
+# the Lead field name, so _find_bad_field can strip the offending field.
+_LINK_DOCTYPE_TO_FIELD = {
+	"country":    "country",
+	"salutation": "salutation",
+	"Country":    "country",
+	"Salutation": "salutation",
+}
+
+
+def _find_bad_field(error_msg, data):
+	"""
+	Parse a Frappe ValidationError message and return the Lead field name
+	that caused it, or None if it cannot be determined.
+	"""
+	import re
+	# "Could not find {DocType}: {value}" — Link field resolution failure
+	m = re.search(r"Could not find ([\w ]+):", error_msg)
+	if m:
+		doctype = m.group(1).strip()
+		field = _LINK_DOCTYPE_TO_FIELD.get(doctype) or _LINK_DOCTYPE_TO_FIELD.get(doctype.lower())
+		if field and field in data:
+			return field
+	# Fallback: if any field's current value appears verbatim in the error, that's the culprit
+	for field, value in data.items():
+		if value and str(value) in error_msg:
+			return field
+	return None
+
 
 class _QuotaExceededError(Exception):
     pass
@@ -127,6 +156,7 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg"):
 		"submitted_at": frappe.utils.now(),
 		"job_id": job_id,
 		"cb_secret": cb_secret,
+		"scanned_by": frappe.session.user,
 	})
 	log.insert(ignore_permissions=True)
 	frappe.db.commit()
@@ -186,9 +216,13 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 	if not job_id or not cb_secret:
 		return {"success": False, "error": "missing_params"}
 
-	log_name = frappe.db.get_value("Card Scan Log", {"job_id": job_id}, "name")
-	if not log_name:
+	log_data = frappe.db.get_value(
+		"Card Scan Log", {"job_id": job_id}, ["name", "scanned_by"], as_dict=True
+	)
+	if not log_data:
 		return {"success": False, "error": "invalid_job_id"}
+	log_name = log_data.name
+	scanned_by = log_data.scanned_by
 
 	# Constant-time secret comparison — prevents timing-based enumeration
 	stored_secret = frappe.db.get_value("Card Scan Log", log_name, "cb_secret") or ""
@@ -218,11 +252,51 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 				if k in _ALLOWED_LEAD_FIELDS and v not in (None, "")
 			}
 		if data:
+			skipped_fields = {}
 			try:
-				lead = frappe.get_doc({"doctype": "Lead", **data})
-				lead.insert(ignore_permissions=True)
-				frappe.db.commit()
-				lead_name = lead.name
+				# Retry loop: on ValidationError, strip the offending field and try again.
+				# This handles AI values that don't match ERPNext options (e.g. country="BHARAT").
+				for _attempt in range(len(data) + 1):
+					try:
+						lead_doc_data = {"doctype": "Lead", **data}
+						if scanned_by and scanned_by != "Guest":
+							lead_doc_data["lead_owner"] = scanned_by
+						lead = frappe.get_doc(lead_doc_data)
+						lead.insert(ignore_permissions=True)
+						frappe.db.commit()
+						lead_name = lead.name
+						break
+					except frappe.exceptions.DuplicateEntryError:
+						raise
+					except frappe.ValidationError as e:
+						frappe.db.rollback()
+						bad_field = _find_bad_field(str(e), data)
+						if bad_field:
+							skipped_fields[bad_field] = data.pop(bad_field)
+						else:
+							raise  # can't identify which field — propagate
+				else:
+					raise frappe.ValidationError("All fields were invalid; no lead could be created.")
+
+				# Add a comment listing any skipped fields so the sales rep knows what was dropped
+				if skipped_fields:
+					# Null out the skipped fields — without this, Frappe applies doctype
+					# defaults (e.g. country defaults to "India") when the field is absent.
+					frappe.db.set_value("Lead", lead_name,
+						{f: None for f in skipped_fields})
+					lines = ["<b>NextIQ: the following fields were skipped (invalid values):</b><ul>"]
+					for f, v in skipped_fields.items():
+						lines.append(f"<li><b>{f}</b>: {v}</li>")
+					lines.append("</ul>")
+					frappe.get_doc({
+						"doctype": "Comment",
+						"comment_type": "Info",
+						"reference_doctype": "Lead",
+						"reference_name": lead_name,
+						"content": "".join(lines),
+					}).insert(ignore_permissions=True)
+					frappe.db.commit()
+
 			except frappe.exceptions.DuplicateEntryError as e:
 				err_msg = str(e)[:500] or "A lead with this email address already exists."
 				frappe.db.rollback()
@@ -236,11 +310,7 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 				_send_scan_notification(log_name, "duplicate_lead", message=err_msg)
 				return {"success": False, "error": "duplicate_lead"}
 			except frappe.ValidationError as e:
-				# AI processed successfully and returned data, but the data has
-				# values that Frappe cannot accept (e.g. country="USA" instead of
-				# "United States", invalid select option, bad link value, etc.).
-				# Scan is already charged — this is a data quality issue, not a failure.
-				err_msg = str(e)[:500] or "AI data could not be saved as a Lead — one or more field values were invalid."
+				err_msg = str(e)[:500] or "AI data could not be saved as a Lead — all field values were invalid."
 				frappe.db.rollback()
 				frappe.db.set_value("Card Scan Log", log_name, {
 					"status": "Invalid Data",
