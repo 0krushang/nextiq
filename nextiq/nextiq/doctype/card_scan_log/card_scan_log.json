@@ -7,6 +7,7 @@
  "field_order": [
   "status",
   "submitted_at",
+  "scanned_by",
   "column_break_pxss",
   "merged_image",
   "processed_at",
@@ -22,6 +23,14 @@
   "cb_secret"
  ],
  "fields": [
+  {
+   "fieldname": "scanned_by",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Scanned By",
+   "options": "User",
+   "read_only": 1
+  },
   {
    "fieldname": "status",
    "fieldtype": "Select",
