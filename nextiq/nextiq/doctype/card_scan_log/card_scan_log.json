@@ -11,6 +11,8 @@
   "column_break_pxss",
   "merged_image",
   "processed_at",
+  "section_break_notes",
+  "notes",
   "section_break_iewb",
   "ai_response",
   "column_break_zpqw",
@@ -94,6 +96,18 @@
    "description": "Single-use token that authenticates the result callback from the NextIQ platform. Cleared automatically after use."
   },
   {
+   "fieldname": "section_break_notes",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Long Text",
+   "label": "Notes",
+   "read_only": 1,
+   "description": "Optional note entered by the user at scan time. Added to the Lead's notes on creation."
+  },
+  {
    "fieldname": "column_break_pxss",
    "fieldtype": "Column Break"
   },
@@ -123,7 +137,7 @@
   }
  ],
  "links": [],
- "modified": "2026-04-16 00:00:00.000000",
+ "modified": "2026-05-01 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "NextIQ",
  "name": "Card Scan Log",
