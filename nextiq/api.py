@@ -154,16 +154,19 @@ def _create_lead_address(lead_name, address_data):
 			}).insert(ignore_permissions=True)
 			frappe.db.commit()
 
-	except Exception:
+	except Exception as e:
 		frappe.log_error(frappe.get_traceback(), f"NextIQ: Address creation failed for Lead {lead_name}")
 		# Leave a comment on the Lead so the sales rep can add the address manually
 		try:
+			err_str = str(e)
 			lines = ["<b>NextIQ: Address could not be created automatically.</b>"]
+			if err_str:
+				lines.append(f"<br><b>Reason:</b> {html.escape(err_str)}")
 			if address_data:
-				lines.append(" The following address data was extracted from the card:<ul>")
+				lines.append("<br>Address data extracted from the card:<ul>")
 				for f, v in address_data.items():
 					if v:
-						lines.append(f"<li><b>{f}</b>: {v}</li>")
+						lines.append(f"<li><b>{f}</b>: {html.escape(str(v))}</li>")
 				lines.append("</ul>")
 			lines.append("<p>Please add the address manually to this lead.</p>")
 			frappe.get_doc({
