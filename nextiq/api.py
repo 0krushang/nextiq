@@ -4,7 +4,9 @@
 import base64
 import hashlib
 import hmac
+import html
 import ipaddress
+import re
 import secrets
 import traceback
 
@@ -205,7 +207,7 @@ def _rate_limit(key, max_per_minute):
 # ── Public endpoints (called from card-scan portal JS) ───────────────────────
 
 @frappe.whitelist()
-def submit_card_scan(merged_image_base64, filename="business_card.jpg"):
+def submit_card_scan(merged_image_base64, filename="business_card.jpg", notes=None):
 	"""
 	Receive merged business card image from the portal.
 	Generates job_id + cb_secret, saves image, enqueues _fire_scan_to_service.
@@ -240,6 +242,9 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg"):
 	if len(merged_image_base64) > MAX_B64:
 		frappe.throw("Image is too large (max 7.5 MB). Please use a smaller image.", title="Image Too Large")
 
+	# Sanitize notes: strip HTML tags, limit length
+	notes_clean = re.sub(r"<[^>]+>", "", str(notes or "")).strip()[:2000] or None
+
 	# Generate credentials for this scan job
 	job_id    = secrets.token_urlsafe(32)
 	cb_secret = secrets.token_urlsafe(32)
@@ -251,6 +256,7 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg"):
 		"job_id": job_id,
 		"cb_secret": cb_secret,
 		"scanned_by": frappe.session.user,
+		"notes": notes_clean,
 	})
 	log.insert(ignore_permissions=True)
 	frappe.db.commit()
@@ -395,8 +401,11 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 					}).insert(ignore_permissions=True)
 					frappe.db.commit()
 
+
 				if lead_name and address_data:
 					_create_lead_address(lead_name, address_data)
+
+				_append_scan_note(lead_name, log_name, scanned_by)
 
 			except frappe.exceptions.DuplicateEntryError as e:
 				err_msg = str(e)[:500] or "A lead with this email address already exists."
@@ -546,6 +555,7 @@ def _fire_scan_to_service(log_name):
 					"callback_url":    callback_url,
 					"cb_secret":       log.cb_secret,
 					"customer_log_id": log.name,
+					"notes":           log.notes or "",
 					"scanned_by":      log.scanned_by,
 				},
 				headers={
@@ -616,6 +626,30 @@ def _fire_scan_to_service(log_name):
 		})
 		frappe.db.commit()
 		_send_scan_notification(log_name, "failed", message=str(e))
+
+
+# ── Notes helper ─────────────────────────────────────────────────────────────
+
+def _append_scan_note(lead_name, log_name, scanned_by):
+	"""Add the user's scan-time note to the Lead's notes child table. Fails silently."""
+	try:
+		log_notes = frappe.db.get_value("Card Scan Log", log_name, "notes")
+		if not log_notes or not lead_name:
+			return
+		note_html = "<p>" + html.escape(str(log_notes)).replace("\n", "<br>") + "</p>"
+		lead_doc = frappe.get_doc("Lead", lead_name)
+		lead_doc.append("notes", {
+			"note": note_html,
+			"added_by": scanned_by,
+			"added_on": frappe.utils.now_datetime(),
+		})
+		lead_doc.save(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"NextIQ: Note append failed for Lead {lead_name}",
+		)
 
 
 # ── Feedback to service ───────────────────────────────────────────────────────
