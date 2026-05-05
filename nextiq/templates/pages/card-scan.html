@@ -1579,10 +1579,16 @@ function checkForUpdates() {
       // Start recording
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-          ? "audio/webm;codecs=opus" : "audio/webm";
-        voiceAudioMime = mimeType;
-        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        const AUDIO_TYPES = [
+          "audio/webm;codecs=opus",  // Chrome, Edge, Android
+          "audio/mp4;codecs=mp4a.40.2", // Safari, iOS (AAC-LC)
+          "audio/mp4",               // Safari fallback
+          "audio/ogg;codecs=opus",   // Firefox
+          "audio/webm",              // Chrome without codec hint
+        ];
+        const mimeType = AUDIO_TYPES.find(t => MediaRecorder.isTypeSupported(t)) || "";
+        voiceAudioMime = mimeType || "audio/webm";
+        mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
         recordingChunks = [];
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordingChunks.push(e.data); };
         mediaRecorder.onstop = () => {
