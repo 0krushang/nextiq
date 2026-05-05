@@ -362,13 +362,13 @@ def _rate_limit(key, max_per_minute):
 
 @frappe.whitelist()
 def submit_card_scan(merged_image_base64, filename="business_card.jpg", notes=None,
-                     voice_audio_base64=None, voice_language=None, audio_mime_type=None):
+                     voice_clips=None):
 	"""
-	Receive merged business card image from the portal.
-	Generates job_id + cb_secret, saves image, enqueues _fire_scan_to_service.
+	Receive merged business card image + optional voice clips from the portal.
+	voice_clips: JSON array of {base64, mime} objects (up to 3).
 
+	Generates job_id + cb_secret, saves image + audio files, enqueues _fire_scan_to_service.
 	Returns immediately: {"log_name": str}
-	The browser can close after this — Lead is created via background + callback.
 	"""
 	# Block if the installed app is below the service-required minimum version
 	_service_min = frappe.db.get_value(
@@ -381,7 +381,7 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg", notes=No
 			title="App Update Required",
 		)
 
-	# Rate limit: 10 scans per minute per user (hash user to keep plaintext out of Redis)
+	# Rate limit: 10 scans per minute per user
 	_user_hash = hashlib.sha256(frappe.session.user.encode()).hexdigest()
 	if not _rate_limit(f"nextiq_scan:{_user_hash}", max_per_minute=10):
 		frappe.throw(
@@ -392,17 +392,23 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg", notes=No
 	if "," in merged_image_base64:
 		merged_image_base64 = merged_image_base64.split(",")[1]
 
-	# Guard against oversized payloads — business cards don't need more than ~7.5 MB
-	MAX_B64 = 10 * 1024 * 1024  # 10 MB base64 ≈ 7.5 MB raw
+	MAX_B64 = 10 * 1024 * 1024
 	if len(merged_image_base64) > MAX_B64:
 		frappe.throw("Image is too large (max 7.5 MB). Please use a smaller image.", title="Image Too Large")
 
-	# Sanitize notes: strip HTML tags, limit length
 	notes_clean = re.sub(r"<[^>]+>", "", str(notes or "")).strip()[:2000] or None
-	voice_language_clean = (str(voice_language or "")).strip()[:100] or None
-	audio_mime_clean = (str(audio_mime_type or "")).strip()[:50] or None
 
-	# Generate credentials for this scan job
+	# Parse voice clips — browser sends JSON string or list
+	if isinstance(voice_clips, str):
+		try:
+			import json as _json
+			voice_clips = _json.loads(voice_clips)
+		except Exception:
+			voice_clips = []
+	if not isinstance(voice_clips, list):
+		voice_clips = []
+	voice_clips = voice_clips[:3]  # hard cap at 3
+
 	job_id    = secrets.token_urlsafe(32)
 	cb_secret = secrets.token_urlsafe(32)
 
@@ -414,18 +420,16 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg", notes=No
 		"cb_secret": cb_secret,
 		"scanned_by": frappe.session.user,
 		"notes": notes_clean,
-		"voice_language": voice_language_clean,
 	})
 	log.insert(ignore_permissions=True)
 	frappe.db.commit()
 
-	# Save the merged image as a private Frappe file
+	# Save merged image
 	try:
-		file_content = base64.b64decode(merged_image_base64)
 		file_doc = frappe.get_doc({
 			"doctype": "File",
 			"file_name": f"card_scan_{log.name}.jpg",
-			"content": file_content,
+			"content": base64.b64decode(merged_image_base64),
 			"is_private": 1,
 			"attached_to_doctype": "Card Scan Log",
 			"attached_to_name": log.name,
@@ -442,32 +446,40 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg", notes=No
 		frappe.db.commit()
 		return {"log_name": log.name}
 
-	# Save voice audio as a private file (if provided)
-	if voice_audio_base64:
+	# Save each voice clip as a private file; store URLs on the log
+	saved_clips = []   # [{url, mime}]
+	for idx, clip in enumerate(voice_clips):
+		if not isinstance(clip, dict) or not clip.get("base64"):
+			continue
 		try:
-			if "," in voice_audio_base64:
-				voice_audio_base64 = voice_audio_base64.split(",")[1]
-			audio_content = base64.b64decode(voice_audio_base64)
-			audio_ext = "webm" if "webm" in (audio_mime_clean or "") else "ogg"
+			b64 = clip["base64"]
+			if "," in b64:
+				b64 = b64.split(",")[1]
+			mime = (str(clip.get("mime") or "audio/webm"))[:50]
+			ext  = "mp4" if "mp4" in mime else ("ogg" if "ogg" in mime else "webm")
 			audio_doc = frappe.get_doc({
 				"doctype": "File",
-				"file_name": f"voice_{log.name}.{audio_ext}",
-				"content": audio_content,
+				"file_name": f"voice_{log.name}_{idx + 1}.{ext}",
+				"content": base64.b64decode(b64),
 				"is_private": 1,
 				"attached_to_doctype": "Card Scan Log",
 				"attached_to_name": log.name,
 			})
 			audio_doc.save(ignore_permissions=True)
-			frappe.db.set_value("Card Scan Log", log.name, "voice_audio", audio_doc.file_url)
-			frappe.db.commit()
+			saved_clips.append({"url": audio_doc.file_url, "mime": mime})
 		except Exception:
-			frappe.log_error(frappe.get_traceback(), f"NextIQ: Voice audio save failed for {log.name}")
+			frappe.log_error(frappe.get_traceback(),
+				f"NextIQ: Voice clip {idx+1} save failed for {log.name}")
 
-	# Enqueue lightweight job — it fires the request and returns in <1s
+	# Store first clip URL in voice_audio for backwards compatibility display
+	if saved_clips:
+		frappe.db.set_value("Card Scan Log", log.name, "voice_audio", saved_clips[0]["url"])
+		frappe.db.commit()
+
 	frappe.enqueue(
 		"nextiq.api._fire_scan_to_service",
 		log_name=log.name,
-		audio_mime_type=audio_mime_clean,
+		saved_clips=saved_clips,
 		queue="long",
 		timeout=60,
 		now=False,
@@ -676,14 +688,10 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 
 # ── Background job ────────────────────────────────────────────────────────────
 
-def _fire_scan_to_service(log_name, audio_mime_type=None):
+def _fire_scan_to_service(log_name, saved_clips=None):
 	"""
-	Lightweight RQ job: load image, fire request to nextiq_service, return in <1s.
-
-	nextiq_service enqueues its own background job, returns immediately with
-	{"queued": true, "job_id": "..."}.
-
-	The actual result arrives later via the scan_callback endpoint.
+	Lightweight RQ job: load image + voice clips, fire to nextiq_service.
+	saved_clips: list of {url, mime} dicts saved by submit_card_scan.
 	"""
 	logger = frappe.logger("nextiq")
 	logger.info(f"[NextIQ] Firing scan to service: {log_name}")
@@ -708,22 +716,22 @@ def _fire_scan_to_service(log_name, audio_mime_type=None):
 		file_doc     = frappe.get_doc("File", {"file_url": log.merged_image})
 		image_base64 = base64.b64encode(file_doc.get_content()).decode()
 
-		# Load voice audio if present
-		voice_audio_base64 = None
-		if log.voice_audio:
+		# Load voice clips from saved file URLs
+		voice_clips_payload = []
+		for clip_info in (saved_clips or []):
+			if not isinstance(clip_info, dict) or not clip_info.get("url"):
+				continue
 			try:
-				audio_file_doc = frappe.get_doc("File", {"file_url": log.voice_audio})
-				voice_audio_base64 = base64.b64encode(audio_file_doc.get_content()).decode()
+				af = frappe.get_doc("File", {"file_url": clip_info["url"]})
+				voice_clips_payload.append({
+					"base64": base64.b64encode(af.get_content()).decode(),
+					"mime":   clip_info.get("mime", "audio/webm"),
+				})
 			except Exception:
 				frappe.log_error(frappe.get_traceback(),
-					f"NextIQ: Voice audio load failed for {log_name} — proceeding without audio")
+					f"NextIQ: Voice clip load failed for {log_name} — skipping")
 
-		# Build callback URL pointing back to this site
-		callback_url = (
-			frappe.utils.get_url()
-			+ "/api/method/nextiq.api.scan_callback"
-		)
-
+		callback_url = frappe.utils.get_url() + "/api/method/nextiq.api.scan_callback"
 		logger.info(f"[NextIQ] Calling service at {SERVICE_URL}, job_id={log.job_id}")
 
 		payload = {
@@ -736,9 +744,8 @@ def _fire_scan_to_service(log_name, audio_mime_type=None):
 			"notes":           log.notes or "",
 			"scanned_by":      log.scanned_by,
 		}
-		if voice_audio_base64:
-			payload["voice_audio_base64"] = voice_audio_base64
-			payload["audio_mime_type"]    = audio_mime_type or "audio/webm"
+		if voice_clips_payload:
+			payload["voice_clips"] = voice_clips_payload
 
 		try:
 			response = requests.post(

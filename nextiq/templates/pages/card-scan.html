@@ -704,74 +704,179 @@
     transform: scale(.98);
   }
 
-  /* ── Voice note row ──────────────────────────────────────────────── */
-  .voice-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 20px 0;
+  /* ── Notes section labels ─────────────────────────────────────────── */
+  .notes-section-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    padding: 14px 20px 6px;
   }
 
-  /* Mic button */
-  .btn-mic {
-    width: 42px;
-    height: 42px;
+  /* ── Voice notes section ──────────────────────────────────────────── */
+  .voice-section {
+    padding: 0 20px;
+  }
+
+  /* Recording bar — shown while recording */
+  .recording-bar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    background: rgba(239, 68, 68, .06);
+    border: 1.5px solid rgba(239, 68, 68, .25);
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    animation: rec-pulse-border 1.4s ease-in-out infinite;
+  }
+
+  .recording-bar.active { display: flex; }
+
+  @keyframes rec-pulse-border {
+    0%, 100% { border-color: rgba(239, 68, 68, .25); }
+    50%       { border-color: rgba(239, 68, 68, .65); }
+  }
+
+  .recording-dot {
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    border: 1.5px solid #e5e7eb;
-    background: transparent;
+    background: #ef4444;
+    flex-shrink: 0;
+    animation: rec-dot-blink 1s step-start infinite;
+  }
+
+  @keyframes rec-dot-blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+  }
+
+  .recording-timer {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: #ef4444;
+  }
+
+  .btn-stop-rec {
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    background: #ef4444;
+    border: none;
+    color: #fff;
+    transition: background .15s;
+  }
+
+  .btn-stop-rec:hover { background: #dc2626; }
+
+  /* Voice clip chips */
+  .voice-clips { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+
+  .voice-chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(28, 114, 252, .05);
+    border: 1.5px solid rgba(28, 114, 252, .2);
+    border-radius: 12px;
+    padding: 8px 12px;
+  }
+
+  .voice-chip-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #1c72fc;
     display: flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
     flex-shrink: 0;
-    transition: background .15s, border-color .15s, transform .1s;
+    cursor: pointer;
+    transition: background .15s;
   }
 
-  .btn-mic:active { transform: scale(.88); }
+  .voice-chip-icon:hover { background: #1558cc; }
 
-  .btn-mic svg {
-    width: 18px;
-    height: 18px;
+  .voice-chip-icon svg {
+    width: 14px;
+    height: 14px;
+    fill: #fff;
+    stroke: none;
+  }
+
+  .voice-chip-label {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 600;
+    color: #111;
+  }
+
+  .voice-chip-dur {
+    font-size: 11px;
+    color: #6b7280;
+    font-weight: 500;
+  }
+
+  .voice-chip-del {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9ca3af;
+    font-size: 16px;
+    line-height: 1;
+    transition: color .15s, background .15s;
+    padding: 0;
+    font-family: inherit;
+  }
+
+  .voice-chip-del:hover { color: #ef4444; background: rgba(239,68,68,.08); }
+
+  /* Add voice note button */
+  .btn-add-voice {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1.5px dashed #d1d5db;
+    background: transparent;
+    color: #6b7280;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+
+  .btn-add-voice:hover {
+    border-color: #1c72fc;
+    color: #1c72fc;
+    background: rgba(28,114,252,.04);
+  }
+
+  .btn-add-voice svg {
+    width: 16px;
+    height: 16px;
     fill: none;
-    stroke: #6b7280;
-    stroke-width: 1.8;
+    stroke: currentColor;
+    stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
-    transition: stroke .15s;
+    flex-shrink: 0;
   }
-
-  .btn-mic.recording {
-    background: rgba(239, 68, 68, .1);
-    border-color: rgba(239, 68, 68, .4);
-    animation: mic-pulse 1.2s ease-in-out infinite;
-  }
-
-  .btn-mic.recording svg { stroke: #ef4444; }
-
-  .btn-mic.has-audio {
-    background: rgba(28, 114, 252, .08);
-    border-color: rgba(28, 114, 252, .35);
-  }
-
-  .btn-mic.has-audio svg { stroke: #1c72fc; }
-
-  @keyframes mic-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .35); }
-    50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-  }
-
-  /* Recording status label */
-  .voice-status {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: #9ca3af;
-    padding: 4px 20px 0;
-    min-height: 18px;
-    transition: color .2s;
-  }
-
-  .voice-status.recording { color: #ef4444; }
-  .voice-status.done      { color: #1c72fc; }
 
   /* ── Toast ────────────────────────────────────────────────────────── */
   .toast {
@@ -1117,21 +1222,34 @@ function checkForUpdates() {
       <img id="notes-img-back" src="" alt="Back side">
     </div>
   </div>
-  <div class="voice-row">
-    <button class="btn-mic" id="btn-mic" title="Tap to record voice note">
+
+  <div class="notes-section-label">Written Notes</div>
+  <textarea class="notes-textarea" id="notes-textarea"
+    placeholder="e.g. Vipul bhai ne demo batavo che, follow up next week…"
+    maxlength="2000"></textarea>
+
+  <div class="notes-section-label">Voice Notes</div>
+  <div class="voice-section">
+    <!-- Recording bar — visible while recording -->
+    <div class="recording-bar" id="recording-bar">
+      <div class="recording-dot"></div>
+      <div class="recording-timer" id="recording-timer">Recording… 0s</div>
+      <button class="btn-stop-rec" id="btn-stop-rec">■ Stop</button>
+    </div>
+    <!-- Saved clips list -->
+    <div class="voice-clips" id="voice-clips"></div>
+    <!-- Add voice note button -->
+    <button class="btn-add-voice" id="btn-add-voice">
       <svg viewBox="0 0 24 24">
         <rect x="9" y="2" width="6" height="11" rx="3"/>
         <path d="M5 10a7 7 0 0 0 14 0"/>
         <line x1="12" y1="19" x2="12" y2="22"/>
         <line x1="8" y1="22" x2="16" y2="22"/>
       </svg>
+      Add voice note
     </button>
   </div>
-  <div class="voice-status" id="voice-status"></div>
 
-  <textarea class="notes-textarea" id="notes-textarea"
-    placeholder="e.g. Met at Booth 14, follow up next week…"
-    maxlength="2000"></textarea>
   <div class="notes-actions">
     <button class="notes-cancel-btn" id="notes-cancel-btn">Cancel</button>
     <button class="notes-primary-btn" id="notes-primary-btn">Save Notes</button>
@@ -1540,87 +1658,143 @@ function checkForUpdates() {
     // ── Submit ─────────────────────────────────────────────────────────────
     let _locked = false;
 
-    // ── Voice recording ────────────────────────────────────────────────────
-    let voiceAudioBase64   = null;   // captured audio ready to submit
-    let voiceAudioMime     = "audio/webm";
-    let mediaRecorder      = null;
-    let recordingChunks    = [];
-    let recordingTimer     = null;
-    let recordingSeconds   = 0;
+    // ── Voice recording — multi-clip (max 3) ──────────────────────────────
+    const MAX_VOICE_CLIPS  = 3;
     const MAX_RECORD_SEC   = 60;
 
-    const btnMic        = document.getElementById("btn-mic");
-    const voiceStatus   = document.getElementById("voice-status");
+    // voiceClips = [{base64, mime, durationSec}]
+    let voiceClips        = [];
+    let mediaRecorder     = null;
+    let recordingChunks   = [];
+    let recordingTimer    = null;
+    let recordingSeconds  = 0;
+    let _activeMime       = "audio/webm";
 
-    function _setVoiceStatus(text, cls) {
-      voiceStatus.textContent = text;
-      voiceStatus.className = "voice-status" + (cls ? " " + cls : "");
+    const recordingBar   = document.getElementById("recording-bar");
+    const recordingTimerEl = document.getElementById("recording-timer");
+    const btnStopRec     = document.getElementById("btn-stop-rec");
+    const voiceClipsEl   = document.getElementById("voice-clips");
+    const btnAddVoice    = document.getElementById("btn-add-voice");
+
+    const AUDIO_TYPES = [
+      "audio/webm;codecs=opus",
+      "audio/mp4;codecs=mp4a.40.2",
+      "audio/mp4",
+      "audio/ogg;codecs=opus",
+      "audio/webm",
+    ];
+
+    function _fmtSec(s) {
+      const m = Math.floor(s / 60), sec = s % 60;
+      return m > 0 ? `${m}:${String(sec).padStart(2,"0")}` : `0:${String(sec).padStart(2,"0")}`;
+    }
+
+    function _renderClips() {
+      voiceClipsEl.innerHTML = "";
+      voiceClips.forEach((clip, i) => {
+        const chip = document.createElement("div");
+        chip.className = "voice-chip";
+
+        // Play/pause icon button
+        const playBtn = document.createElement("div");
+        playBtn.className = "voice-chip-icon";
+        playBtn.title = "Play";
+        playBtn.innerHTML = `<svg viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg>`;
+        let audio = null;
+        playBtn.addEventListener("click", () => {
+          if (audio && !audio.paused) {
+            audio.pause(); audio.currentTime = 0;
+            playBtn.innerHTML = `<svg viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg>`;
+            return;
+          }
+          audio = new Audio(`data:${clip.mime};base64,${clip.base64}`);
+          playBtn.innerHTML = `<svg viewBox="0 0 16 16"><rect x="3" y="2" width="3" height="12"/><rect x="10" y="2" width="3" height="12"/></svg>`;
+          audio.play();
+          audio.onended = () => {
+            playBtn.innerHTML = `<svg viewBox="0 0 16 16"><polygon points="4,2 14,8 4,14"/></svg>`;
+          };
+        });
+
+        const label = document.createElement("div");
+        label.className = "voice-chip-label";
+        label.textContent = `Voice Note ${i + 1}`;
+
+        const dur = document.createElement("div");
+        dur.className = "voice-chip-dur";
+        dur.textContent = _fmtSec(clip.durationSec);
+
+        const delBtn = document.createElement("button");
+        delBtn.className = "voice-chip-del";
+        delBtn.textContent = "×";
+        delBtn.title = "Remove";
+        delBtn.addEventListener("click", () => {
+          if (audio && !audio.paused) { audio.pause(); }
+          voiceClips.splice(i, 1);
+          _renderClips();
+          _updateAddBtn();
+        });
+
+        chip.append(playBtn, label, dur, delBtn);
+        voiceClipsEl.appendChild(chip);
+      });
+    }
+
+    function _updateAddBtn() {
+      btnAddVoice.style.display = voiceClips.length >= MAX_VOICE_CLIPS ? "none" : "flex";
     }
 
     function _stopRecording() {
       if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
       clearInterval(recordingTimer);
-      btnMic.classList.remove("recording");
+      recordingBar.classList.remove("active");
     }
 
-    btnMic.addEventListener("click", async () => {
-      // If already has audio → clear it
-      if (voiceAudioBase64 && mediaRecorder?.state === "inactive") {
-        voiceAudioBase64 = null;
-        btnMic.classList.remove("has-audio");
-        _setVoiceStatus("");
-        return;
-      }
-      // If currently recording → stop
-      if (mediaRecorder && mediaRecorder.state === "recording") {
-        _stopRecording();
-        return;
-      }
-      // Start recording
+    btnStopRec.addEventListener("click", _stopRecording);
+
+    btnAddVoice.addEventListener("click", async () => {
+      if (voiceClips.length >= MAX_VOICE_CLIPS) return;
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const AUDIO_TYPES = [
-          "audio/webm;codecs=opus",  // Chrome, Edge, Android
-          "audio/mp4;codecs=mp4a.40.2", // Safari, iOS (AAC-LC)
-          "audio/mp4",               // Safari fallback
-          "audio/ogg;codecs=opus",   // Firefox
-          "audio/webm",              // Chrome without codec hint
-        ];
         const mimeType = AUDIO_TYPES.find(t => MediaRecorder.isTypeSupported(t)) || "";
-        voiceAudioMime = mimeType || "audio/webm";
+        _activeMime = mimeType || "audio/webm";
         mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
         recordingChunks = [];
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordingChunks.push(e.data); };
         mediaRecorder.onstop = () => {
           stream.getTracks().forEach(t => t.stop());
-          const blob = new Blob(recordingChunks, { type: voiceAudioMime });
+          const dur = recordingSeconds;
+          const blob = new Blob(recordingChunks, { type: _activeMime });
           const reader = new FileReader();
           reader.onload = ev => {
-            voiceAudioBase64 = ev.target.result.split(",")[1];
-            btnMic.classList.add("has-audio");
-            _setVoiceStatus("Voice note ready — tap mic to clear", "done");
+            voiceClips.push({
+              base64: ev.target.result.split(",")[1],
+              mime: _activeMime,
+              durationSec: dur,
+            });
+            _renderClips();
+            _updateAddBtn();
           };
           reader.readAsDataURL(blob);
         };
         mediaRecorder.start(250);
         recordingSeconds = 0;
-        btnMic.classList.add("recording");
-        _setVoiceStatus("Recording… 0s (tap to stop)", "recording");
+        recordingBar.classList.add("active");
+        recordingTimerEl.textContent = "Recording… 0s";
         recordingTimer = setInterval(() => {
           recordingSeconds++;
-          _setVoiceStatus(`Recording… ${recordingSeconds}s (tap to stop)`, "recording");
+          recordingTimerEl.textContent = `Recording… ${recordingSeconds}s`;
           if (recordingSeconds >= MAX_RECORD_SEC) _stopRecording();
         }, 1000);
       } catch (_) {
-        _setVoiceStatus("Microphone not available");
+        showToast("Microphone not available", "error", 3000);
       }
     });
 
     function _resetVoice() {
       _stopRecording();
-      voiceAudioBase64 = null;
-      btnMic.classList.remove("has-audio", "recording");
-      _setVoiceStatus("");
+      voiceClips = [];
+      _renderClips();
+      _updateAddBtn();
     }
 
     async function submitInBackground(frontURL, backURL, notes) {
@@ -1639,9 +1813,8 @@ function checkForUpdates() {
           filename: "business_card.jpg",
           notes: notes || "",
         };
-        if (voiceAudioBase64) {
-          payload.voice_audio_base64 = voiceAudioBase64;
-          payload.audio_mime_type    = voiceAudioMime;
+        if (voiceClips.length > 0) {
+          payload.voice_clips = voiceClips.map(c => ({ base64: c.base64, mime: c.mime }));
         }
         await apiCall("nextiq.api.submit_card_scan", payload);
         showToast("Card submitted", "success", 2000);
