@@ -704,6 +704,101 @@
     transform: scale(.98);
   }
 
+  /* ── Voice note row ──────────────────────────────────────────────── */
+  .voice-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px 0;
+  }
+
+  /* Language pills */
+  .lang-pills {
+    display: flex;
+    gap: 6px;
+    flex: 1;
+  }
+
+  .lang-pill {
+    padding: 6px 14px;
+    border-radius: 50px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1.5px solid #e5e7eb;
+    background: transparent;
+    color: #6b7280;
+    font-family: inherit;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+
+  .lang-pill.active {
+    background: #111;
+    border-color: #111;
+    color: #fff;
+  }
+
+  /* Mic button */
+  .btn-mic {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1.5px solid #e5e7eb;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background .15s, border-color .15s, transform .1s;
+  }
+
+  .btn-mic:active { transform: scale(.88); }
+
+  .btn-mic svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: #6b7280;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: stroke .15s;
+  }
+
+  .btn-mic.recording {
+    background: rgba(239, 68, 68, .1);
+    border-color: rgba(239, 68, 68, .4);
+    animation: mic-pulse 1.2s ease-in-out infinite;
+  }
+
+  .btn-mic.recording svg { stroke: #ef4444; }
+
+  .btn-mic.has-audio {
+    background: rgba(28, 114, 252, .08);
+    border-color: rgba(28, 114, 252, .35);
+  }
+
+  .btn-mic.has-audio svg { stroke: #1c72fc; }
+
+  @keyframes mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, .35); }
+    50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  }
+
+  /* Recording status label */
+  .voice-status {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #9ca3af;
+    padding: 4px 20px 0;
+    min-height: 18px;
+    transition: color .2s;
+  }
+
+  .voice-status.recording { color: #ef4444; }
+  .voice-status.done      { color: #1c72fc; }
+
   /* ── Toast ────────────────────────────────────────────────────────── */
   .toast {
     position: fixed;
@@ -1048,6 +1143,22 @@ function checkForUpdates() {
       <img id="notes-img-back" src="" alt="Back side">
     </div>
   </div>
+  <div class="voice-row">
+    <div class="lang-pills">
+      <button class="lang-pill active" data-lang="English">EN</button>
+      <button class="lang-pill" data-lang="Gujarati">GU</button>
+    </div>
+    <button class="btn-mic" id="btn-mic" title="Hold to record voice note">
+      <svg viewBox="0 0 24 24">
+        <rect x="9" y="2" width="6" height="11" rx="3"/>
+        <path d="M5 10a7 7 0 0 0 14 0"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+        <line x1="8" y1="22" x2="16" y2="22"/>
+      </svg>
+    </button>
+  </div>
+  <div class="voice-status" id="voice-status"></div>
+
   <textarea class="notes-textarea" id="notes-textarea"
     placeholder="e.g. Met at Booth 14, follow up next week…"
     maxlength="2000"></textarea>
@@ -1190,8 +1301,9 @@ function checkForUpdates() {
 
     notesCancelBtn.addEventListener("click", () => {
       if (_sheetSubmitMode) {
-        // Discard captured images → start over from step 1
+        // Discard captured images + voice → start over from step 1
         pendingFrontURL = null; pendingBackURL = null;
+        _resetVoice();
         _closeSheet();
         goToStep1();
       } else {
@@ -1458,6 +1570,93 @@ function checkForUpdates() {
     // ── Submit ─────────────────────────────────────────────────────────────
     let _locked = false;
 
+    // ── Voice recording ────────────────────────────────────────────────────
+    let voiceAudioBase64   = null;   // captured audio ready to submit
+    let voiceAudioMime     = "audio/webm";
+    let selectedLanguage   = "English";
+    let mediaRecorder      = null;
+    let recordingChunks    = [];
+    let recordingTimer     = null;
+    let recordingSeconds   = 0;
+    const MAX_RECORD_SEC   = 60;
+
+    const btnMic        = document.getElementById("btn-mic");
+    const voiceStatus   = document.getElementById("voice-status");
+
+    // Language pill selection
+    document.querySelectorAll(".lang-pill").forEach(pill => {
+      pill.addEventListener("click", () => {
+        document.querySelectorAll(".lang-pill").forEach(p => p.classList.remove("active"));
+        pill.classList.add("active");
+        selectedLanguage = pill.dataset.lang;
+      });
+    });
+
+    function _setVoiceStatus(text, cls) {
+      voiceStatus.textContent = text;
+      voiceStatus.className = "voice-status" + (cls ? " " + cls : "");
+    }
+
+    function _stopRecording() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+      clearInterval(recordingTimer);
+      btnMic.classList.remove("recording");
+    }
+
+    btnMic.addEventListener("click", async () => {
+      // If already has audio → clear it
+      if (voiceAudioBase64 && mediaRecorder?.state === "inactive") {
+        voiceAudioBase64 = null;
+        btnMic.classList.remove("has-audio");
+        _setVoiceStatus("");
+        return;
+      }
+      // If currently recording → stop
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        _stopRecording();
+        return;
+      }
+      // Start recording
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus" : "audio/webm";
+        voiceAudioMime = mimeType;
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+        recordingChunks = [];
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordingChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          const blob = new Blob(recordingChunks, { type: voiceAudioMime });
+          const reader = new FileReader();
+          reader.onload = ev => {
+            voiceAudioBase64 = ev.target.result.split(",")[1];
+            btnMic.classList.add("has-audio");
+            _setVoiceStatus("Voice note ready — tap mic to clear", "done");
+          };
+          reader.readAsDataURL(blob);
+        };
+        mediaRecorder.start(250);
+        recordingSeconds = 0;
+        btnMic.classList.add("recording");
+        _setVoiceStatus("Recording… 0s (tap to stop)", "recording");
+        recordingTimer = setInterval(() => {
+          recordingSeconds++;
+          _setVoiceStatus(`Recording… ${recordingSeconds}s (tap to stop)`, "recording");
+          if (recordingSeconds >= MAX_RECORD_SEC) _stopRecording();
+        }, 1000);
+      } catch (_) {
+        _setVoiceStatus("Microphone not available");
+      }
+    });
+
+    function _resetVoice() {
+      _stopRecording();
+      voiceAudioBase64 = null;
+      btnMic.classList.remove("has-audio", "recording");
+      _setVoiceStatus("");
+    }
+
     async function submitInBackground(frontURL, backURL, notes) {
       if (_locked) return;
       if (scansRemaining !== null && scansRemaining <= 0) {
@@ -1469,13 +1668,19 @@ function checkForUpdates() {
       showToast("Uploading…", "info", 8000);
       try {
         const merged = await mergeImages(frontURL, backURL);
-        await apiCall("nextiq.api.submit_card_scan", {
+        const payload = {
           merged_image_base64: merged.split(",")[1],
           filename: "business_card.jpg",
           notes: notes || "",
-        });
+        };
+        if (voiceAudioBase64) {
+          payload.voice_audio_base64 = voiceAudioBase64;
+          payload.voice_language     = selectedLanguage;
+          payload.audio_mime_type    = voiceAudioMime;
+        }
+        await apiCall("nextiq.api.submit_card_scan", payload);
         showToast("Card submitted", "success", 2000);
-        // Optimistically decrement; re-fetch to get accurate server value
+        _resetVoice();
         if (scansRemaining !== null) { scansRemaining = Math.max(0, scansRemaining - 1); renderBalance(); }
         setTimeout(fetchBalance, 4000);
       } catch (e) {
