@@ -471,9 +471,13 @@ def submit_card_scan(merged_image_base64, filename="business_card.jpg", notes=No
 			frappe.log_error(frappe.get_traceback(),
 				f"NextIQ: Voice clip {idx+1} save failed for {log.name}")
 
-	# Store first clip URL in voice_audio for backwards compatibility display
+	# Store clip URLs in voice_audio, voice_audio_2, voice_audio_3
 	if saved_clips:
-		frappe.db.set_value("Card Scan Log", log.name, "voice_audio", saved_clips[0]["url"])
+		clip_fields = {}
+		field_names = ["voice_audio", "voice_audio_2", "voice_audio_3"]
+		for i, c in enumerate(saved_clips[:3]):
+			clip_fields[field_names[i]] = c["url"]
+		frappe.db.set_value("Card Scan Log", log.name, clip_fields)
 		frappe.db.commit()
 
 	frappe.enqueue(
