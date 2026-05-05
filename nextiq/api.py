@@ -895,11 +895,17 @@ def _apply_voice_notes(lead_name, voice_notes, scanned_by):
 		for task in tasks:
 			if not isinstance(task, dict) or not task.get("description"):
 				continue
+			desc_en     = str(task.get("description", ""))
+			desc_native = str(task.get("description_native") or desc_en)
+			if desc_native and desc_native != desc_en:
+				task_html = desc_en + "<p><em>(" + desc_native.replace("<p>", "").replace("</p>", "") + ")</em></p>"
+			else:
+				task_html = desc_en
 			frappe.get_doc({
 				"doctype":        "ToDo",
 				"status":         "Open",
 				"priority":       "Medium",
-				"description":    str(task.get("description", ""))[:2000],
+				"description":    task_html[:2000],
 				"date":           (task.get("date") or frappe.utils.today())[:10],
 				"reference_type": "Lead",
 				"reference_name": lead_name,
@@ -916,13 +922,25 @@ def _apply_voice_notes(lead_name, voice_notes, scanned_by):
 			category = event.get("event_category", "Meeting")
 			if category not in _VALID_CATEGORIES:
 				category = "Other"
-			starts_on = event.get("starts_on") or str(frappe.utils.today())
+			starts_on      = event.get("starts_on") or str(frappe.utils.today())
+			subject_en     = str(event.get("subject", ""))[:80]
+			subject_native = str(event.get("subject_native") or subject_en)[:80]
+			if subject_native and subject_native != subject_en:
+				full_subject = f"{subject_en} ({subject_native})"[:100]
+			else:
+				full_subject = subject_en
+			desc_en     = str(event.get("description", ""))
+			desc_native = str(event.get("description_native") or desc_en)
+			if desc_native and desc_native != desc_en:
+				event_desc = desc_en + "<p><em>(" + desc_native.replace("<p>", "").replace("</p>", "") + ")</em></p>"
+			else:
+				event_desc = desc_en
 			frappe.get_doc({
 				"doctype":           "Event",
-				"subject":           str(event.get("subject", ""))[:100],
+				"subject":           full_subject,
 				"event_category":    category,
 				"starts_on":         starts_on,
-				"description":       str(event.get("description", ""))[:2000],
+				"description":       event_desc[:2000],
 				"status":            "Open",
 				"event_type":        "Private",
 				"event_participants": [{
