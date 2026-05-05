@@ -597,7 +597,7 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 				frappe.db.set_value("Card Scan Log", log_name, {
 					"status": "Invalid Data",
 					"error_message": err_msg,
-					"ai_response": frappe.as_json(data or {}),
+					"ai_response": frappe.as_json({"lead": original_data or {}, "voice_notes": voice_notes or {}}),
 					"processed_at": frappe.utils.now(),
 					"cb_secret": "",
 				})
@@ -639,7 +639,7 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 			"lead": lead_name,
 			"crm_lead": crm_lead_name,
 			"processed_at": frappe.utils.now(),
-			"ai_response": frappe.as_json(original_data or {}),
+			"ai_response": frappe.as_json({"lead": original_data or {}, "voice_notes": voice_notes or {}}),
 			"cb_secret": "",   # single-use — clear after successful callback
 		}
 		if scans_remaining is not None:
