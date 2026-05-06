@@ -601,6 +601,11 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 					if crm_lead_name:
 						_append_crm_lead_note(crm_lead_name, log_name, scanned_by)
 
+				if lead_name:
+					_append_media_comment("Lead", lead_name, log_name)
+				if crm_lead_name:
+					_append_media_comment("CRM Lead", crm_lead_name, log_name)
+
 			except frappe.exceptions.DuplicateEntryError as e:
 				err_msg = str(e)[:500] or "A lead with this email address already exists."
 				frappe.db.rollback()
@@ -833,6 +838,56 @@ def _fire_scan_to_service(log_name, saved_clips=None):
 
 
 # ── Notes helper ─────────────────────────────────────────────────────────────
+
+def _append_media_comment(ref_doctype, ref_name, log_name):
+	"""Post scanned card image and voice clips as a comment on the lead. Fails silently."""
+	try:
+		log = frappe.db.get_value(
+			"Card Scan Log", log_name,
+			["merged_image", "voice_audio", "voice_audio_2", "voice_audio_3"],
+			as_dict=True,
+		)
+		if not log:
+			return
+
+		lines = []
+
+		if log.merged_image:
+			escaped = html.escape(log.merged_image)
+			lines.append(
+				f'<p><b>Business Card:</b></p>'
+				f'<p><img src="{escaped}" style="max-width:500px;border-radius:4px;"></p>'
+			)
+
+		for label, url in (
+			("Voice Note 1", log.voice_audio),
+			("Voice Note 2", log.voice_audio_2),
+			("Voice Note 3", log.voice_audio_3),
+		):
+			if url:
+				escaped = html.escape(url)
+				lines.append(
+					f'<p><b>{label}:</b><br>'
+					f'<audio controls src="{escaped}" style="width:100%;max-width:420px;"></audio></p>'
+				)
+
+		if not lines:
+			return
+
+		frappe.get_doc({
+			"doctype": "Comment",
+			"comment_type": "Info",
+			"reference_doctype": ref_doctype,
+			"reference_name": ref_name,
+			"content": "".join(lines),
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"NextIQ: Media comment failed for {ref_doctype} {ref_name}",
+		)
+
 
 def _append_scan_note(lead_name, log_name, scanned_by):
 	"""Add the user's scan-time note to the Lead's notes child table. Fails silently."""
