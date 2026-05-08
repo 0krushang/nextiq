@@ -146,47 +146,6 @@
     color: #f87171;
   }
 
-  /* ── Scan mode toggle ────────────────────────────────────────────── */
-  .mode-toggle {
-    height: 36px;
-    border-radius: 50px;
-    background: #222;
-    border: 1px solid #3a3a3a;
-    display: flex;
-    align-items: center;
-    position: relative;
-    padding: 3px;
-    user-select: none;
-  }
-
-  .mode-slider {
-    position: absolute;
-    top: 3px;
-    bottom: 3px;
-    border-radius: 50px;
-    background: #fff;
-    transition: left .28s cubic-bezier(.4, 0, .2, 1), width .28s cubic-bezier(.4, 0, .2, 1);
-    pointer-events: none;
-    box-shadow: 0 1px 6px rgba(0, 0, 0, .2);
-  }
-
-  .mode-opt {
-    padding: 0 13px;
-    font-size: 12px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, .5);
-    position: relative;
-    z-index: 1;
-    transition: color .25s;
-    white-space: nowrap;
-    line-height: 30px;
-    cursor: pointer;
-  }
-
-  .mode-opt.active {
-    color: #111;
-  }
-
   /* ── Tab switcher ─────────────────────────────────────────────────── */
   .tab-row {
     position: absolute;
@@ -228,6 +187,34 @@
 
   .tab-pill.active {
     color: #111;
+  }
+
+  .tab-skip {
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, .38);
+    cursor: pointer;
+    padding: 7px 0;
+    max-width: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+    transition: max-width .28s cubic-bezier(.4,0,.2,1), opacity .22s, padding .28s cubic-bezier(.4,0,.2,1);
+    white-space: nowrap;
+    user-select: none;
+    border-left: 1px solid transparent;
+  }
+
+  .tab-skip.visible {
+    max-width: 72px;
+    padding: 7px 14px;
+    opacity: 1;
+    pointer-events: auto;
+    border-left-color: rgba(255, 255, 255, .12);
+  }
+
+  .tab-skip:active {
+    color: rgba(255, 255, 255, .75);
   }
 
   /* ── Tap-to-focus ring ────────────────────────────────────────────── */
@@ -462,15 +449,6 @@
   .shutter-btn:disabled {
     opacity: .4;
     pointer-events: none;
-  }
-
-  .shutter-btn.mode-quick {
-    background: #1c72fc;
-    box-shadow: 0 0 0 5px rgba(28, 114, 252, .18), 0 4px 22px rgba(28, 114, 252, .38);
-  }
-
-  .shutter-btn.mode-quick .shutter-inner {
-    border-color: rgba(255, 255, 255, .22);
   }
 
   .shutter-inner {
@@ -1159,18 +1137,14 @@ function checkForUpdates() {
       <span class="balance-dot" id="balance-dot"></span>
       <span class="balance-text" id="balance-text">…</span>
     </div>
-    <div class="mode-toggle" id="scan-mode-toggle">
-      <div class="mode-slider" id="scan-mode-slider"></div>
-      <div class="mode-opt active" id="scan-mode-quick">Quick</div>
-      <div class="mode-opt" id="scan-mode-notes">+ Notes</div>
-    </div>
   </div>
 
-  <!-- Tab row: Front Side / Back Side -->
+  <!-- Tab row: Front Side / Back Side / Skip -->
   <div class="tab-row" id="tab-row">
     <div class="tab-slider" id="tab-slider"></div>
     <div class="tab-pill active" id="tab-front">Front Side</div>
     <div class="tab-pill" id="tab-back">Back Side</div>
+    <div class="tab-skip" id="tab-skip">Skip →</div>
   </div>
 
   <!-- Scan overlay: frame + corners + scan line -->
@@ -1224,7 +1198,7 @@ function checkForUpdates() {
       <div class="notes-card-image-label">Front</div>
       <img id="notes-img-front" src="" alt="Front side">
     </div>
-    <div class="notes-card-image-wrap">
+    <div class="notes-card-image-wrap" id="notes-img-back-wrap">
       <div class="notes-card-image-label">Back</div>
       <img id="notes-img-back" src="" alt="Back side">
     </div>
@@ -1285,8 +1259,7 @@ function checkForUpdates() {
     let noteText        = "";
     let pendingFrontURL = null;
     let pendingBackURL  = null;
-    // "quick" = submit immediately after back scan; "notes" = sheet pops up first
-    let scanMode = localStorage.getItem("nextiq_scanmode") || "quick";
+
 
     // ── DOM ───────────────────────────────────────────────────────────────
     const video = document.getElementById("video-main");
@@ -1294,6 +1267,7 @@ function checkForUpdates() {
     const statusText = document.getElementById("status-text");
     const tabFront = document.getElementById("tab-front");
     const tabBack = document.getElementById("tab-back");
+    const tabSkip = document.getElementById("tab-skip");
     const tabSlider = document.getElementById("tab-slider");
     const thumbSlot = document.getElementById("thumb-slot");
     const btnShutter      = document.getElementById("btn-shutter");
@@ -1307,10 +1281,6 @@ function checkForUpdates() {
     const notesCardImages = document.getElementById("notes-card-images");
     const notesImgFront   = document.getElementById("notes-img-front");
     const notesImgBack    = document.getElementById("notes-img-back");
-    const modeToggle      = document.getElementById("scan-mode-toggle");
-    const modeSlider      = document.getElementById("scan-mode-slider");
-    const modeOptQuick    = document.getElementById("scan-mode-quick");
-    const modeOptNotes    = document.getElementById("scan-mode-notes");
     const flashEl         = document.getElementById("capture-flash");
 
     // ── Tab slider ────────────────────────────────────────────────────────
@@ -1330,6 +1300,15 @@ function checkForUpdates() {
     // Tap Front Side tab when on step 2 → redo front capture
     tabFront.addEventListener("click", () => {
       if (step === 2) { frontDataURL = null; goToStep1(); }
+    });
+
+    // Tap Skip → open notes sheet with front image only (no back scan)
+    tabSkip.addEventListener("click", () => {
+      if (step !== 2) return;
+      pendingFrontURL = frontDataURL;
+      pendingBackURL  = null;
+      frontDataURL    = null;
+      openNotesSheet(true);
     });
 
     // ── Notes bottom sheet ────────────────────────────────────────────────
@@ -1358,9 +1337,16 @@ function checkForUpdates() {
       notesTextarea.value = noteText;
       notesSheetTitle.textContent = "Add a note";
       _updatePrimaryBtn();
-      if (submitMode && pendingFrontURL && pendingBackURL) {
+      if (submitMode && pendingFrontURL) {
         notesImgFront.src = pendingFrontURL;
-        notesImgBack.src  = pendingBackURL;
+        const backWrap = document.getElementById("notes-img-back-wrap");
+        if (pendingBackURL) {
+          notesImgBack.src = pendingBackURL;
+          backWrap.style.display = "";
+        } else {
+          notesImgBack.src = "";
+          backWrap.style.display = "none";
+        }
         notesCardImages.style.display = "flex";
         notesSheet.classList.add("submit-mode");
       } else {
@@ -1536,25 +1522,17 @@ function checkForUpdates() {
         goToStep2();
       } else {
         const backURL = cropToCardFrame();
-        if (scanMode === "notes") {
-          pendingFrontURL = frontDataURL;
-          pendingBackURL  = backURL;
-          frontDataURL    = null;
-          openNotesSheet(true);
-        } else {
-          const capturedNote = noteText;
-          noteText = ""; notesTextarea.value = ""; updateNotesBadge();
-          submitInBackground(frontDataURL, backURL, capturedNote);
-          frontDataURL = null;
-          goToStep1();
-        }
+        pendingFrontURL = frontDataURL;
+        pendingBackURL  = backURL;
+        frontDataURL    = null;
+        openNotesSheet(true);
       }
     }
 
     // ── Step transitions ───────────────────────────────────────────────────
     function goToStep1() {
       step = 1;
-      btnShutter.classList.remove("mode-quick");
+      tabSkip.classList.remove("visible");
       statusText.textContent = "Align front of business card";
       setActiveTab("front");
       thumbSlot.innerHTML = `<svg viewBox="0 0 24 24">
@@ -1567,7 +1545,7 @@ function checkForUpdates() {
 
     function goToStep2() {
       step = 2;
-      btnShutter.classList.toggle("mode-quick", scanMode === "quick");
+      tabSkip.classList.add("visible");
       statusText.textContent = "Flip — align back side";
       setActiveTab("back");
       const img = new Image();
@@ -1598,6 +1576,19 @@ function checkForUpdates() {
     function b64Bytes(d) {
       const b = (d.split(",")[1] || "");
       return Math.floor(b.length * 3 / 4) - (b.match(/=+$/) || [""])[0].length;
+    }
+
+    async function scaleSingleImage(dataURL) {
+      const { img, w, h } = await loadScaled(dataURL, MAX_PX);
+      const cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      cv.getContext("2d").drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, 0, 0, w, h);
+      let result;
+      for (const q of QUALITIES) {
+        result = cv.toDataURL("image/jpeg", q);
+        if (b64Bytes(result) <= MAX_BYTES) break;
+      }
+      return result;
     }
 
     async function mergeImages(frontURL, backURL) {
@@ -1830,7 +1821,7 @@ function checkForUpdates() {
       btnShutter.disabled = true;
       showToast("Uploading…", "info", 8000);
       try {
-        const merged = await mergeImages(frontURL, backURL);
+        const merged = backURL ? await mergeImages(frontURL, backURL) : await scaleSingleImage(frontURL);
         const payload = {
           merged_image_base64: merged.split(",")[1],
           filename: "business_card.jpg",
@@ -1872,37 +1863,15 @@ function checkForUpdates() {
         const dataURL = e.target.result;
         flashCapture();
         if (step === 1) { frontDataURL = dataURL; goToStep2(); }
-        else if (scanMode === "notes") {
+        else {
           pendingFrontURL = frontDataURL;
           pendingBackURL  = dataURL;
           frontDataURL    = null;
           openNotesSheet(true);
-        } else {
-          const capturedNote = noteText;
-          noteText = ""; notesTextarea.value = ""; updateNotesBadge();
-          submitInBackground(frontDataURL, dataURL, capturedNote);
-          frontDataURL = null; goToStep1();
         }
       };
       reader.readAsDataURL(file);
     });
-
-    // ── Scan mode toggle ───────────────────────────────────────────────────
-    function applyScanMode(mode) {
-      scanMode = mode;
-      localStorage.setItem("nextiq_scanmode", mode);
-      modeOptQuick.classList.toggle("active", mode === "quick");
-      modeOptNotes.classList.toggle("active", mode === "notes");
-      btnShutter.classList.toggle("mode-quick", mode === "quick" && step === 2);
-      const toggleRect = modeToggle.getBoundingClientRect();
-      const activeOpt  = mode === "quick" ? modeOptQuick : modeOptNotes;
-      const optRect    = activeOpt.getBoundingClientRect();
-      modeSlider.style.left  = (optRect.left - toggleRect.left) + "px";
-      modeSlider.style.width = optRect.width + "px";
-    }
-
-    modeOptQuick.addEventListener("click", () => applyScanMode("quick"));
-    modeOptNotes.addEventListener("click", () => applyScanMode("notes"));
 
     // ── Keyboard — shift notes sheet above keyboard when it opens ─────────
     if (window.visualViewport) {
@@ -1920,7 +1889,6 @@ function checkForUpdates() {
       goToStep1();
       requestAnimationFrame(() => {
         slideTabTo(tabFront);
-        applyScanMode(scanMode);
       });
     });
 
