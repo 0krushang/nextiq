@@ -592,6 +592,8 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 						crm_lead_name = _create_crm_lead(data.copy(), scanned_by, log_name)
 
 				_apply_voice_notes(lead_name, voice_notes, scanned_by)
+				if crm_lead_name:
+					_apply_crm_voice_notes(crm_lead_name, voice_notes, scanned_by)
 
 				# Add raw written note only when AI produced no summary (note already in AI summary otherwise)
 				ai_has_summary = bool((voice_notes or {}).get("summary_note"))
@@ -600,6 +602,11 @@ def scan_callback(job_id, cb_secret, success, data=None, error=None,
 						_append_scan_note(lead_name, log_name, scanned_by)
 					if crm_lead_name:
 						_append_crm_lead_note(crm_lead_name, log_name, scanned_by)
+
+				if lead_name:
+					_append_media_comment("Lead", lead_name, log_name)
+				if crm_lead_name:
+					_append_media_comment("CRM Lead", crm_lead_name, log_name, comment_type="Comment")
 
 			except frappe.exceptions.DuplicateEntryError as e:
 				err_msg = str(e)[:500] or "A lead with this email address already exists."
@@ -834,6 +841,56 @@ def _fire_scan_to_service(log_name, saved_clips=None):
 
 # ── Notes helper ─────────────────────────────────────────────────────────────
 
+def _append_media_comment(ref_doctype, ref_name, log_name, comment_type="Info"):
+	"""Post scanned card image and voice clips as a comment on the lead. Fails silently."""
+	try:
+		log = frappe.db.get_value(
+			"Card Scan Log", log_name,
+			["merged_image", "voice_audio", "voice_audio_2", "voice_audio_3"],
+			as_dict=True,
+		)
+		if not log:
+			return
+
+		lines = []
+
+		if log.merged_image:
+			escaped = html.escape(log.merged_image)
+			lines.append(
+				f'<p><b>Business Card:</b></p>'
+				f'<p><img src="{escaped}" style="max-width:500px;border-radius:4px;"></p>'
+			)
+
+		for label, url in (
+			("Voice Note 1", log.voice_audio),
+			("Voice Note 2", log.voice_audio_2),
+			("Voice Note 3", log.voice_audio_3),
+		):
+			if url:
+				escaped = html.escape(url)
+				lines.append(
+					f'<p><b>{label}:</b><br>'
+					f'<audio controls src="{escaped}" style="width:100%;max-width:420px;"></audio></p>'
+				)
+
+		if not lines:
+			return
+
+		frappe.get_doc({
+			"doctype": "Comment",
+			"comment_type": comment_type,
+			"reference_doctype": ref_doctype,
+			"reference_name": ref_name,
+			"content": "".join(lines),
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+	except Exception:
+		frappe.log_error(
+			frappe.get_traceback(),
+			f"NextIQ: Media comment failed for {ref_doctype} {ref_name}",
+		)
+
+
 def _append_scan_note(lead_name, log_name, scanned_by):
 	"""Add the user's scan-time note to the Lead's notes child table. Fails silently."""
 	try:
@@ -859,18 +916,18 @@ def _append_scan_note(lead_name, log_name, scanned_by):
 # ── CRM Lead note helper ─────────────────────────────────────────────────────
 
 def _append_crm_lead_note(crm_lead_name, log_name, scanned_by):
-	"""Add the scan-time note to the CRM Lead as a Comment. Fails silently."""
+	"""Add the scan-time written note to the CRM Lead as an FCRM Note. Fails silently."""
 	try:
 		log_notes = frappe.db.get_value("Card Scan Log", log_name, "notes")
 		if not log_notes or not crm_lead_name:
 			return
 		note_html = "<p>" + html.escape(str(log_notes)).replace("\n", "<br>") + "</p>"
 		frappe.get_doc({
-			"doctype": "Comment",
-			"comment_type": "Info",
-			"reference_doctype": "CRM Lead",
-			"reference_name": crm_lead_name,
+			"doctype": "FCRM Note",
+			"title": "Scan Note",
 			"content": note_html,
+			"reference_doctype": "CRM Lead",
+			"reference_docname": crm_lead_name,
 		}).insert(ignore_permissions=True)
 		frappe.db.commit()
 	except Exception:
@@ -878,6 +935,34 @@ def _append_crm_lead_note(crm_lead_name, log_name, scanned_by):
 			frappe.get_traceback(),
 			f"NextIQ: Note append failed for CRM Lead {crm_lead_name}",
 		)
+
+
+# ── Bilingual text helpers ────────────────────────────────────────────────────
+
+def _bi_html(en, native):
+	"""
+	Return HTML combining English + native text.
+	- Strips any trailing (...) the AI may have already appended to `en`.
+	- Only adds native in parentheses when it differs from `en` AND contains
+	  non-ASCII characters (actual script, not a transliteration duplicate).
+	"""
+	en_clean = re.sub(r"\s*\([^)]*\)\s*$", "", str(en or "")).strip() or str(en or "")
+	nat      = str(native or "").strip()
+	if nat and nat != en_clean and any(ord(c) > 127 for c in nat):
+		return en_clean + "<p><em>(" + nat.replace("<p>", "").replace("</p>", "") + ")</em></p>"
+	return en_clean or str(en or "")
+
+
+def _bi_inline(en, native, max_len=100):
+	"""
+	Return 'English (Native)' inline string for subjects/titles.
+	Same guard: native must differ from en and contain non-ASCII script.
+	"""
+	en_clean = re.sub(r"\s*\([^)]*\)\s*$", "", str(en or "")).strip() or str(en or "")
+	nat      = str(native or "").strip()
+	if nat and nat != en_clean and any(ord(c) > 127 for c in nat):
+		return f"{en_clean} ({nat})"[:max_len]
+	return en_clean[:max_len]
 
 
 # ── Voice notes helper ───────────────────────────────────────────────────────
@@ -897,83 +982,182 @@ def _apply_voice_notes(lead_name, voice_notes, scanned_by):
 	if not summary_note and not tasks and not events:
 		return
 
+	_orig_user = frappe.session.user
 	try:
-		# ── Summary note (bilingual transcript + structured breakdown) ──────────
+		# Run as scanned_by so all created records are owned by the real user
+		# (Private events owned by Guest are invisible in the Event list)
+		frappe.set_user(scanned_by or "Administrator")
+
+		# ── Summary note ───────────────────────────────────────────────────────
 		if summary_note.strip():
-			lead_doc = frappe.get_doc("Lead", lead_name)
-			lead_doc.append("notes", {
-				"note":     summary_note,
-				"added_by": scanned_by or frappe.session.user,
-				"added_on": frappe.utils.now_datetime(),
-			})
-			lead_doc.save(ignore_permissions=True)
-			frappe.db.commit()
+			try:
+				lead_doc = frappe.get_doc("Lead", lead_name)
+				lead_doc.append("notes", {
+					"note":     summary_note,
+					"added_by": scanned_by or frappe.session.user,
+					"added_on": frappe.utils.now_datetime(),
+				})
+				lead_doc.save(ignore_permissions=True)
+				frappe.db.commit()
+			except Exception:
+				frappe.log_error(frappe.get_traceback(),
+					f"NextIQ: ERPNext Note failed for Lead {lead_name}")
 
 		# ── Tasks (ToDo) ────────────────────────────────────────────────────────
-		for task in tasks:
-			if not isinstance(task, dict) or not task.get("description"):
-				continue
-			desc_en     = str(task.get("description", ""))
-			desc_native = str(task.get("description_native") or desc_en)
-			if desc_native and desc_native != desc_en:
-				task_html = desc_en + "<p><em>(" + desc_native.replace("<p>", "").replace("</p>", "") + ")</em></p>"
-			else:
-				task_html = desc_en
-			frappe.get_doc({
-				"doctype":        "ToDo",
-				"status":         "Open",
-				"priority":       "Medium",
-				"description":    task_html[:2000],
-				"date":           (task.get("date") or frappe.utils.today())[:10],
-				"reference_type": "Lead",
-				"reference_name": lead_name,
-				"allocated_to":   scanned_by or frappe.session.user,
-			}).insert(ignore_permissions=True)
-		if tasks:
-			frappe.db.commit()
+		try:
+			for task in tasks:
+				if not isinstance(task, dict) or not task.get("description"):
+					continue
+				task_html = _bi_html(task.get("description", ""), task.get("description_native"))
+				frappe.get_doc({
+					"doctype":        "ToDo",
+					"status":         "Open",
+					"priority":       "Medium",
+					"description":    task_html[:2000],
+					"date":           (task.get("date") or frappe.utils.today())[:10],
+					"reference_type": "Lead",
+					"reference_name": lead_name,
+					"allocated_to":   scanned_by or frappe.session.user,
+				}).insert(ignore_permissions=True)
+			if tasks:
+				frappe.db.commit()
+		except Exception:
+			frappe.log_error(frappe.get_traceback(),
+				f"NextIQ: ERPNext Tasks failed for Lead {lead_name}")
 
 		# ── Events ─────────────────────────────────────────────────────────────
 		_VALID_CATEGORIES = {"Event", "Meeting", "Call", "Sent/Received Email", "Other"}
-		for event in events:
-			if not isinstance(event, dict) or not event.get("subject"):
-				continue
-			category = event.get("event_category", "Meeting")
-			if category not in _VALID_CATEGORIES:
-				category = "Other"
-			starts_on      = event.get("starts_on") or str(frappe.utils.today())
-			subject_en     = str(event.get("subject", ""))[:80]
-			subject_native = str(event.get("subject_native") or subject_en)[:80]
-			if subject_native and subject_native != subject_en:
-				full_subject = f"{subject_en} ({subject_native})"[:100]
-			else:
-				full_subject = subject_en
-			desc_en     = str(event.get("description", ""))
-			desc_native = str(event.get("description_native") or desc_en)
-			if desc_native and desc_native != desc_en:
-				event_desc = desc_en + "<p><em>(" + desc_native.replace("<p>", "").replace("</p>", "") + ")</em></p>"
-			else:
-				event_desc = desc_en
-			frappe.get_doc({
-				"doctype":           "Event",
-				"subject":           full_subject,
-				"event_category":    category,
-				"starts_on":         starts_on,
-				"description":       event_desc[:2000],
-				"status":            "Open",
-				"event_type":        "Private",
-				"event_participants": [{
-					"reference_doctype": "Lead",
-					"reference_docname": lead_name,
-				}],
-			}).insert(ignore_permissions=True)
-		if events:
-			frappe.db.commit()
+		try:
+			for event in events:
+				if not isinstance(event, dict) or not event.get("subject"):
+					continue
+				category = event.get("event_category", "Meeting")
+				if category not in _VALID_CATEGORIES:
+					category = "Other"
+				starts_on    = event.get("starts_on") or str(frappe.utils.today())
+				full_subject = _bi_inline(event.get("subject", ""), event.get("subject_native"), max_len=100)
+				event_desc   = _bi_html(event.get("description", ""), event.get("description_native"))
+				frappe.get_doc({
+					"doctype":           "Event",
+					"subject":           full_subject,
+					"event_category":    category,
+					"starts_on":         starts_on,
+					"description":       event_desc[:2000],
+					"status":            "Open",
+					"event_type":        "Private",
+					"event_participants": [{
+						"reference_doctype": "Lead",
+						"reference_docname": lead_name,
+					}],
+				}).insert(ignore_permissions=True)
+			if events:
+				frappe.db.commit()
+		except Exception:
+			frappe.log_error(frappe.get_traceback(),
+				f"NextIQ: ERPNext Events failed for Lead {lead_name}")
 
-	except Exception:
-		frappe.log_error(
-			frappe.get_traceback(),
-			f"NextIQ: Voice notes apply failed for Lead {lead_name}",
-		)
+	finally:
+		frappe.set_user(_orig_user)
+
+
+# ── CRM voice notes helper ───────────────────────────────────────────────────
+
+def _apply_crm_voice_notes(crm_lead_name, voice_notes, scanned_by):
+	"""
+	Create FCRM Note, CRM Tasks, and Events from AI-extracted voice note data for a CRM Lead.
+	Mirrors _apply_voice_notes but uses CRM-native doctypes.
+	Fails silently — errors must never block lead creation.
+	"""
+	if not crm_lead_name or not voice_notes or not isinstance(voice_notes, dict):
+		return
+
+	summary_note = voice_notes.get("summary_note") or ""
+	tasks        = voice_notes.get("tasks") or []
+	events       = voice_notes.get("events") or []
+
+	if not summary_note and not tasks and not events:
+		return
+
+	_orig_user = frappe.session.user
+	try:
+		# Run as scanned_by: fixes CRM Task assign_to() permission check
+		# and ensures all records are owned by the real user (not Guest)
+		frappe.set_user(scanned_by or "Administrator")
+
+		# ── Summary note as FCRM Note ─────────────────────────────────────────
+		if summary_note.strip():
+			try:
+				frappe.get_doc({
+					"doctype":           "FCRM Note",
+					"title":             "Scan Note",
+					"content":           summary_note,
+					"reference_doctype": "CRM Lead",
+					"reference_docname": crm_lead_name,
+				}).insert(ignore_permissions=True)
+				frappe.db.commit()
+			except Exception:
+				frappe.log_error(frappe.get_traceback(),
+					f"NextIQ: CRM Note failed for {crm_lead_name}")
+
+		# ── Tasks as CRM Task ─────────────────────────────────────────────────
+		try:
+			for task in tasks:
+				if not isinstance(task, dict) or not task.get("description"):
+					continue
+				task_html = _bi_html(task.get("description", ""), task.get("description_native"))
+				title = re.sub(r"<[^>]+>", "", re.sub(r"\s*\([^)]*\)\s*$", "", str(task.get("description", ""))).strip()).strip()[:140] or "Task"
+				frappe.get_doc({
+					"doctype":           "CRM Task",
+					"title":             title,
+					"description":       task_html[:2000],
+					"status":            "Todo",
+					"priority":          "Medium",
+					"due_date":          (task.get("date") or frappe.utils.today())[:10],
+					"assigned_to":       scanned_by or frappe.session.user,
+					"reference_doctype": "CRM Lead",
+					"reference_docname": crm_lead_name,
+				}).insert(ignore_permissions=True)
+			if tasks:
+				frappe.db.commit()
+		except Exception:
+			frappe.log_error(frappe.get_traceback(),
+				f"NextIQ: CRM Tasks failed for {crm_lead_name}")
+
+		# ── Events ───────────────────────────────────────────────────────────
+		_VALID_CATEGORIES = {"Event", "Meeting", "Call", "Sent/Received Email", "Other"}
+		try:
+			for event in events:
+				if not isinstance(event, dict) or not event.get("subject"):
+					continue
+				category = event.get("event_category", "Meeting")
+				if category not in _VALID_CATEGORIES:
+					category = "Other"
+				starts_on    = event.get("starts_on") or str(frappe.utils.today())
+				full_subject = _bi_inline(event.get("subject", ""), event.get("subject_native"), max_len=100)
+				event_desc   = _bi_html(event.get("description", ""), event.get("description_native"))
+				frappe.get_doc({
+					"doctype":            "Event",
+					"subject":            full_subject,
+					"event_category":     category,
+					"starts_on":          starts_on,
+					"description":        event_desc[:2000],
+					"status":             "Open",
+					"event_type":         "Private",
+					"reference_doctype":  "CRM Lead",
+					"reference_docname":  crm_lead_name,
+					"event_participants": [{
+						"reference_doctype": "CRM Lead",
+						"reference_docname": crm_lead_name,
+					}],
+				}).insert(ignore_permissions=True)
+			if events:
+				frappe.db.commit()
+		except Exception:
+			frappe.log_error(frappe.get_traceback(),
+				f"NextIQ: CRM Events failed for {crm_lead_name}")
+
+	finally:
+		frappe.set_user(_orig_user)
 
 
 # ── Feedback to service ───────────────────────────────────────────────────────
